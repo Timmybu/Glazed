@@ -37,78 +37,78 @@ public class SpawnerProtect extends Module {
     private final SettingGroup sgWebhook = settings.createGroup("Webhook");
 
     private final Setting<Boolean> webhook = sgWebhook.add(new BoolSetting.Builder()
-        .name("webhook")
-        .description("Enable webhook notifications")
-        .defaultValue(false)
-        .build()
+            .name("webhook")
+            .description("Enable webhook notifications")
+            .defaultValue(false)
+            .build()
     );
 
     private final Setting<String> webhookUrl = sgWebhook.add(new StringSetting.Builder()
-        .name("webhook-url")
-        .description("Discord webhook URL for notifications")
-        .defaultValue("")
-        .visible(webhook::get)
-        .build()
+            .name("webhook-url")
+            .description("Discord webhook URL for notifications")
+            .defaultValue("")
+            .visible(webhook::get)
+            .build()
     );
 
     private final Setting<Boolean> selfPing = sgWebhook.add(new BoolSetting.Builder()
-        .name("self-ping")
-        .description("Ping yourself in the webhook message")
-        .defaultValue(false)
-        .visible(webhook::get)
-        .build()
+            .name("self-ping")
+            .description("Ping yourself in the webhook message")
+            .defaultValue(false)
+            .visible(webhook::get)
+            .build()
     );
 
     private final Setting<String> discordId = sgWebhook.add(new StringSetting.Builder()
-        .name("discord-id")
-        .description("Your Discord user ID for pinging")
-        .defaultValue("")
-        .visible(() -> webhook.get() && selfPing.get())
-        .build()
+            .name("discord-id")
+            .description("Your Discord user ID for pinging")
+            .defaultValue("")
+            .visible(() -> webhook.get() && selfPing.get())
+            .build()
     );
 
     private final Setting<Integer> spawnerRange = sgGeneral.add(new IntSetting.Builder()
-        .name("spawner-range")
-        .description("Range to check for remaining spawners")
-        .defaultValue(16)
-        .min(1)
-        .max(50)
-        .sliderMax(50)
-        .build()
+            .name("spawner-range")
+            .description("Range to check for remaining spawners")
+            .defaultValue(16)
+            .min(1)
+            .max(50)
+            .sliderMax(50)
+            .build()
     );
 
     private final Setting<Integer> delaySeconds = sgGeneral.add(new IntSetting.Builder()
-        .name("recheck-delay-seconds")
-        .description("Delay in seconds before rechecking for spawners")
-        .defaultValue(1)
-        .min(1)
-        .sliderMax(10)
-        .build()
+            .name("recheck-delay-seconds")
+            .description("Delay in seconds before rechecking for spawners")
+            .defaultValue(1)
+            .min(1)
+            .sliderMax(10)
+            .build()
     );
 
     private final Setting<Integer> emergencyDistance = sgGeneral.add(new IntSetting.Builder()
-        .name("emergency-distance")
-        .description("Distance in blocks where player triggers immediate disconnect")
-        .defaultValue(7)
-        .min(1)
-        .max(20)
-        .sliderMax(20)
-        .build()
+            .name("emergency-distance")
+            .description("Distance in blocks where player triggers immediate disconnect")
+            .defaultValue(7)
+            .min(1)
+            .max(20)
+            .sliderMax(20)
+            .build()
     );
 
     private final Setting<Boolean> enableWhitelist = sgWhitelist.add(new BoolSetting.Builder()
-        .name("enable-whitelist")
-        .description("Enable player whitelist (whitelisted players won't trigger protection)")
-        .defaultValue(false)
-        .build()
+            .name("enable-whitelist")
+            .description("Enable player whitelist (whitelisted players won't trigger protection)")
+            .defaultValue(false)
+            .build()
     );
 
     private final Setting<List<String>> whitelistPlayers = sgWhitelist.add(new StringListSetting.Builder()
-        .name("whitelisted-players")
-        .description("List of player names to ignore")
-        .defaultValue(new ArrayList<>())
-        .visible(enableWhitelist::get)
-        .build()
+            .name("whitelisted-players")
+            .description("List of player names to ignore")
+            .defaultValue(new ArrayList<>())
+            .visible(enableWhitelist::get)
+            .build()
     );
 
     private enum State {
@@ -338,8 +338,6 @@ public class SpawnerProtect extends Module {
 
             currentState = State.GOING_TO_SPAWNERS;
             info("Player detected! Starting protection sequence...");
-
-            setSneaking(true);
             break;
         }
     }
@@ -350,13 +348,12 @@ public class SpawnerProtect extends Module {
         }
 
         return whitelistPlayers.get().stream()
-            .anyMatch(whitelistedName -> whitelistedName.equalsIgnoreCase(playerName));
+                .anyMatch(whitelistedName -> whitelistedName.equalsIgnoreCase(playerName));
     }
 
     private void handleGoingToSpawners() {
-        setSneaking(true);
-
         if (currentTarget == null) {
+            setSneaking(false);
             currentTarget = findNearestSpawner();
 
             if (currentTarget == null && !waiting) {
@@ -366,13 +363,15 @@ public class SpawnerProtect extends Module {
                 stopBreaking();
                 info("No more spawners found, waiting to confirm...");
             } else if (currentTarget != null) {
+                setSneaking(true);
                 isMiningCycle = true;
                 miningCycleTimer = 0;
                 info("Starting to mine spawner at " + currentTarget);
             }
         } else {
+            setSneaking(true);
             miningCycleTimer++;
-            
+
             if (isMiningCycle) {
                 if (miningCycleTimer >= MINING_DURATION) {
                     isMiningCycle = false;
@@ -417,6 +416,7 @@ public class SpawnerProtect extends Module {
                 isMiningCycle = true;
                 miningCycleTimer = 0;
                 info("Found additional spawner at " + foundSpawner);
+                setSneaking(true);
                 return;
             }
         }
@@ -440,8 +440,8 @@ public class SpawnerProtect extends Module {
         double nearestDistance = Double.MAX_VALUE;
 
         for (BlockPos pos : BlockPos.iterate(
-            playerPos.add(-spawnerRange.get(), -spawnerRange.get(), -spawnerRange.get()),
-            playerPos.add(spawnerRange.get(), spawnerRange.get(), spawnerRange.get()))) {
+                playerPos.add(-spawnerRange.get(), -spawnerRange.get(), -spawnerRange.get()),
+                playerPos.add(spawnerRange.get(), spawnerRange.get(), spawnerRange.get()))) {
 
             if (mc.world.getBlockState(pos).getBlock() == Blocks.SPAWNER) {
                 double distance = pos.getSquaredDistance(mc.player.getPos());
@@ -527,8 +527,8 @@ public class SpawnerProtect extends Module {
         double nearestDistance = Double.MAX_VALUE;
 
         for (BlockPos pos : BlockPos.iterate(
-            playerPos.add(-16, -8, -16),
-            playerPos.add(16, 8, 16))) {
+                playerPos.add(-16, -8, -16),
+                playerPos.add(16, 8, 16))) {
 
             if (mc.world.getBlockState(pos).getBlock() == Blocks.ENDER_CHEST) {
                 double distance = pos.getSquaredDistance(mc.player.getPos());
@@ -569,14 +569,14 @@ public class SpawnerProtect extends Module {
         if (chestOpenAttempts % 5 == 0) {
             if (mc.interactionManager != null && mc.player != null) {
                 mc.interactionManager.interactBlock(
-                    mc.player,
-                    Hand.MAIN_HAND,
-                    new BlockHitResult(
-                        Vec3d.ofCenter(targetChest),
-                        Direction.UP,
-                        targetChest,
-                        false
-                    )
+                        mc.player,
+                        Hand.MAIN_HAND,
+                        new BlockHitResult(
+                                Vec3d.ofCenter(targetChest),
+                                Direction.UP,
+                                targetChest,
+                                false
+                        )
                 );
                 info("Right-clicking ender chest... (attempt " + (chestOpenAttempts / 5 + 1) + ")");
             }
@@ -655,11 +655,11 @@ public class SpawnerProtect extends Module {
 
             if (mc.interactionManager != null) {
                 mc.interactionManager.clickSlot(
-                    handler.syncId,
-                    slotId,
-                    0,
-                    SlotActionType.QUICK_MOVE,
-                    mc.player
+                        handler.syncId,
+                        slotId,
+                        0,
+                        SlotActionType.QUICK_MOVE,
+                        mc.player
                 );
             }
 
@@ -715,10 +715,10 @@ public class SpawnerProtect extends Module {
             try {
                 HttpClient client = HttpClient.newHttpClient();
                 HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(webhookUrlValue))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(embedJson))
-                    .build();
+                        .uri(URI.create(webhookUrlValue))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(embedJson))
+                        .build();
 
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
@@ -739,12 +739,12 @@ public class SpawnerProtect extends Module {
 
         if (emergencyDisconnect) {
             description = String.format("**Player Detected:** %s\\n**Detection Time:** <t:%d:R>\\n**Reason:** %s\\n**Disconnected:** Yes",
-                escapeJson(detectedPlayer), discordTimestamp, escapeJson(emergencyReason));
+                    escapeJson(detectedPlayer), discordTimestamp, escapeJson(emergencyReason));
         } else {
             description = String.format("**Player Detected:** %s\\n**Detection Time:** <t:%d:R>\\n**Spawners Mined:** %s\\n**Items Deposited:** %s\\n**Disconnected:** Yes",
-                escapeJson(detectedPlayer), discordTimestamp,
-                spawnersMinedSuccessfully ? "✅ Success" : "❌ Failed",
-                itemsDepositedSuccessfully ? "✅ Success" : "❌ Failed");
+                    escapeJson(detectedPlayer), discordTimestamp,
+                    spawnersMinedSuccessfully ? "✅ Success" : "❌ Failed",
+                    itemsDepositedSuccessfully ? "✅ Success" : "❌ Failed");
         }
 
         int color = emergencyDisconnect ? 16711680 : 16766720;
@@ -764,21 +764,21 @@ public class SpawnerProtect extends Module {
                     }
                 }]
             }""",
-            escapeJson(messageContent),
-            title,
-            description,
-            color,
-            Instant.now().toString()
+                escapeJson(messageContent),
+                title,
+                description,
+                color,
+                Instant.now().toString()
         );
     }
 
     private String escapeJson(String input) {
         if (input == null) return "";
         return input.replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     @Override
