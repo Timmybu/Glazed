@@ -67,7 +67,7 @@ public class SpawnerOrder extends Module {
         .description("Delay between each action.")
         .defaultValue(20)
         .min(1)
-        .max(200)
+        .max(600)
         .build());
 
     private final Setting<Boolean> notifications = sgGeneral.add(new BoolSetting.Builder()
@@ -81,7 +81,7 @@ public class SpawnerOrder extends Module {
         .description("Number of pages to proces.")
         .defaultValue(1)
         .min(1)
-        .max(10)
+        .max(100)
         .build());
 
     private long lastDropTime = 0;

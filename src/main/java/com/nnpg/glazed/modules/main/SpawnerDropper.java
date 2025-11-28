@@ -21,10 +21,10 @@ public class SpawnerDropper extends Module {
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
         .description("Delay between clicks in ticks.")
-        .defaultValue(5)
+        .defaultValue(100)
         .min(1)
-        .max(20)
-        .sliderMax(20)
+        .max(200)
+        .sliderMax(200)
         .build()
     );
 
