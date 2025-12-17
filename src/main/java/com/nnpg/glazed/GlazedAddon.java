@@ -33,7 +33,7 @@ public static final Category pvp = new Category("Glazed PVP", new ItemStack(Item
     public void onInitialize() {
 
 
-        Modules.get().add(new AutoBoneManager());
+        Modules.get().add(new MassOrderFiller());
         Modules.get().add(new SpawnerProtect()); //done
         Modules.get().add(new AntiTrap()); //done
         Modules.get().add(new CoordSnapper()); //done

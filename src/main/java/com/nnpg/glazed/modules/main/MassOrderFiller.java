@@ -1,14 +1,17 @@
 package com.nnpg.glazed.modules.main;
 
 import com.nnpg.glazed.GlazedAddon;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ChestBlock;
+import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.gui.screen.ingame.GenericContainerScreen;
@@ -18,13 +21,12 @@ import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.screen.GenericContainerScreenHandler;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.Comparator;
@@ -34,9 +36,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class AutoBoneManager extends Module {
+public class MassOrderFiller extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgRender = settings.createGroup("Render");
 
+    // --- General Settings ---
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
             .name("delay")
             .description("Delay in ticks between actions.")
@@ -52,6 +56,15 @@ public class AutoBoneManager extends Module {
             .defaultValue(4.0)
             .min(1.0)
             .sliderMax(6.0)
+            .build()
+    );
+
+    private final Setting<Double> rotationSpeed = sgGeneral.add(new DoubleSetting.Builder()
+            .name("rotation-speed")
+            .description("Rotation speed in degrees per tick.")
+            .defaultValue(10.0)
+            .min(1.0)
+            .max(180.0)
             .build()
     );
 
@@ -73,6 +86,42 @@ public class AutoBoneManager extends Module {
             .name("debug")
             .description("Show debug messages.")
             .defaultValue(false)
+            .build()
+    );
+
+    // --- Render Settings ---
+    private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
+            .name("shape-mode")
+            .description("How the shapes are rendered.")
+            .defaultValue(ShapeMode.Both)
+            .build()
+    );
+
+    private final Setting<SettingColor> chestSideColor = sgRender.add(new ColorSetting.Builder()
+            .name("chest-side-color")
+            .description("The side color of the chest highlight.")
+            .defaultValue(new SettingColor(255, 170, 0, 50))
+            .build()
+    );
+
+    private final Setting<SettingColor> chestLineColor = sgRender.add(new ColorSetting.Builder()
+            .name("chest-line-color")
+            .description("The line color of the chest highlight.")
+            .defaultValue(new SettingColor(255, 170, 0, 255))
+            .build()
+    );
+
+    private final Setting<SettingColor> rangeSideColor = sgRender.add(new ColorSetting.Builder()
+            .name("range-side-color")
+            .description("The side color of the range sphere.")
+            .defaultValue(new SettingColor(255, 255, 255, 25))
+            .build()
+    );
+
+    private final Setting<SettingColor> rangeLineColor = sgRender.add(new ColorSetting.Builder()
+            .name("range-line-color")
+            .description("The line color of the range sphere.")
+            .defaultValue(new SettingColor(255, 255, 255, 150))
             .build()
     );
 
@@ -111,9 +160,13 @@ public class AutoBoneManager extends Module {
     private int attempts = 0;
     private final Set<BlockPos> processedChests = new HashSet<>();
     private BlockPos currentTarget = null;
+    private Vec3d currentTargetOffset = Vec3d.ZERO;
 
-    public AutoBoneManager() {
-        super(GlazedAddon.CATEGORY, "AutoBoneManager", "Automatically checks chests, loots bone shulkers, fills orders, and sells empty/junk shulkers.");
+    // Store original pause setting to restore on deactivate
+    private boolean prevPauseOnLostFocus = true;
+
+    public MassOrderFiller() {
+        super(GlazedAddon.CATEGORY, "MassOrderFiller", "Automatically checks chests, loots bone shulkers, fills orders, and sells empty/junk shulkers.");
     }
 
     @Override
@@ -122,21 +175,71 @@ public class AutoBoneManager extends Module {
         timer = 0;
         processedChests.clear();
         currentTarget = null;
+        currentTargetOffset = Vec3d.ZERO;
+
+        // Prevent the game from pausing when you tab out
+        if (mc.options != null) {
+            prevPauseOnLostFocus = mc.options.pauseOnLostFocus;
+            mc.options.pauseOnLostFocus = false;
+        }
+    }
+
+    @Override
+    public void onDeactivate() {
+        // Restore the previous pause setting
+        if (mc.options != null) {
+            mc.options.pauseOnLostFocus = prevPauseOnLostFocus;
+        }
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        if (mc.player == null || mc.world == null) return;
+
+        // Render Range
+        Vec3d eyePos = mc.player.getEyePos();
+        double r = range.get();
+
+        event.renderer.box(
+                eyePos.x - r, eyePos.y - r, eyePos.z - r,
+                eyePos.x + r, eyePos.y + r, eyePos.z + r,
+                rangeSideColor.get(), rangeLineColor.get(), shapeMode.get(), 0
+        );
+
+        // Render Unchecked Chests
+        BlockPos playerPos = mc.player.getBlockPos();
+        int rInt = (int) Math.ceil(range.get());
+
+        for (int x = -rInt; x <= rInt; x++) {
+            for (int y = -rInt; y <= rInt; y++) {
+                for (int z = -rInt; z <= rInt; z++) {
+                    BlockPos pos = playerPos.add(x, y, z);
+
+                    // Check if within circular range
+                    if (Math.sqrt(pos.getSquaredDistance(playerPos)) > range.get()) continue;
+
+                    // Skip if already processed
+                    if (processedChests.contains(pos)) continue;
+
+                    BlockState state = mc.world.getBlockState(pos);
+                    if (isContainer(state)) {
+                        event.renderer.box(pos, chestSideColor.get(), chestLineColor.get(), shapeMode.get(), 0);
+                    }
+                }
+            }
+        }
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null || mc.interactionManager == null) return;
 
-        // Ensure we keep looking at the target while preparing to interact or retrying
-        if ((stage == Stage.ROTATING || stage == Stage.INTERACTING || stage == Stage.WAIT_FOR_OPEN)
-                && currentTarget != null
-                && mc.currentScreen == null) {
-            lookAtBlock(currentTarget);
-        }
-
         if (timer > 0) {
             timer--;
+            // Even if waiting, keep looking at the target if we are in an interacting phase
+            if ((stage == Stage.INTERACTING || stage == Stage.WAIT_FOR_OPEN) && currentTarget != null && mc.currentScreen == null) {
+                rotateTowards(currentTarget);
+            }
             return;
         }
 
@@ -146,7 +249,14 @@ public class AutoBoneManager extends Module {
                 break;
 
             case ROTATING:
-                stage = Stage.INTERACTING;
+                if (currentTarget == null) {
+                    stage = Stage.SCANNING;
+                    return;
+                }
+                // Rotate smoothly. Only proceed when aimed.
+                if (rotateTowards(currentTarget)) {
+                    stage = Stage.INTERACTING;
+                }
                 break;
 
             case INTERACTING:
@@ -157,10 +267,11 @@ public class AutoBoneManager extends Module {
 
                 if (debug.get()) info("Interacting with chest at " + currentTarget.toShortString() + " (Attempt " + (attempts + 1) + ")");
 
-                if (mc.currentScreen == null) lookAtBlock(currentTarget);
+                // Keep rotating just in case
+                if (mc.currentScreen == null) rotateTowards(currentTarget);
 
                 BlockHitResult hitResult = new BlockHitResult(
-                        new Vec3d(currentTarget.getX() + 0.5, currentTarget.getY() + 1.0, currentTarget.getZ() + 0.5),
+                        new Vec3d(currentTarget.getX() + currentTargetOffset.x, currentTarget.getY() + currentTargetOffset.y, currentTarget.getZ() + currentTargetOffset.z),
                         Direction.UP,
                         currentTarget,
                         false
@@ -173,6 +284,11 @@ public class AutoBoneManager extends Module {
                 break;
 
             case WAIT_FOR_OPEN:
+                // Keep staring at the chest while waiting for it to open
+                if (mc.currentScreen == null && currentTarget != null) {
+                    rotateTowards(currentTarget);
+                }
+
                 if (mc.currentScreen instanceof GenericContainerScreen) {
                     if (debug.get()) info("Container opened successfully.");
                     // Do NOT mark as processed here. Only mark when empty.
@@ -334,33 +450,44 @@ public class AutoBoneManager extends Module {
         nearbyChests.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(playerPos)));
 
         currentTarget = nearbyChests.get(0);
+        // Generate a random offset within the block to aim at (avoid center locking)
+        currentTargetOffset = new Vec3d(Math.random() * 0.4 + 0.3, Math.random() * 0.4 + 0.3, Math.random() * 0.4 + 0.3);
 
         if (debug.get()) info("Found chest at " + currentTarget.toShortString());
 
         stage = Stage.ROTATING;
         attempts = 0;
-        timer = 5;
+        timer = 0;
     }
 
-    private void lookAtBlock(BlockPos pos) {
-        Vec3d targetPos = new Vec3d(pos.getX() + 0.5, pos.getY() + 0.8, pos.getZ() + 0.5);
+    private boolean rotateTowards(BlockPos pos) {
+        Vec3d targetPos = new Vec3d(pos.getX() + currentTargetOffset.x, pos.getY() + currentTargetOffset.y, pos.getZ() + currentTargetOffset.z);
         Vec3d playerPos = mc.player.getEyePos();
         Vec3d direction = targetPos.subtract(playerPos).normalize();
 
-        double yaw = Math.toDegrees(Math.atan2(-direction.x, direction.z));
-        double pitch = Math.toDegrees(-Math.asin(direction.y));
+        double targetYaw = Math.toDegrees(Math.atan2(-direction.x, direction.z));
+        double targetPitch = Math.toDegrees(-Math.asin(direction.y));
 
-        double jitter = (Math.random() - 0.5) * 3.0;
+        float currentYaw = mc.player.getYaw();
+        float currentPitch = mc.player.getPitch();
 
-        mc.player.setYaw((float) (yaw + jitter));
-        mc.player.setPitch((float) (pitch + jitter));
+        float yawDelta = (float) MathHelper.wrapDegrees(targetYaw - currentYaw);
+        float pitchDelta = (float) MathHelper.wrapDegrees(targetPitch - currentPitch);
+
+        float speed = rotationSpeed.get().floatValue();
+
+        float yawChange = MathHelper.clamp(yawDelta, -speed, speed);
+        float pitchChange = MathHelper.clamp(pitchDelta, -speed, speed);
+
+        mc.player.setYaw(currentYaw + yawChange);
+        mc.player.setPitch(currentPitch + pitchChange);
+
+        // Return true if we are close enough to the target rotation
+        return Math.abs(yawDelta) < 5.0 && Math.abs(pitchDelta) < 5.0;
     }
 
     private boolean isContainer(BlockState state) {
-        return state.isOf(Blocks.CHEST) ||
-                state.isOf(Blocks.TRAPPED_CHEST) ||
-                state.isOf(Blocks.BARREL) ||
-                state.getBlock() instanceof ShulkerBoxBlock;
+        return state.isOf(Blocks.CHEST) || state.isOf(Blocks.TRAPPED_CHEST);
     }
 
     private void markChestAsProcessed(BlockPos pos) {
