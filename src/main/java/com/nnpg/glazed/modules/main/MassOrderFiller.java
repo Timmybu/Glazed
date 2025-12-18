@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ChestBlock;
+import net.minecraft.block.EnderChestBlock;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.block.BlockState;
@@ -56,6 +57,17 @@ public class MassOrderFiller extends Module {
             .defaultValue(4.0)
             .min(1.0)
             .sliderMax(6.0)
+            .build()
+    );
+
+    public enum FaceMode {
+        AUTO, UP, DOWN, NORTH, SOUTH, EAST, WEST
+    }
+
+    private final Setting<FaceMode> forceFace = sgGeneral.add(new EnumSetting.Builder<FaceMode>()
+            .name("force-face")
+            .description("Which face of the chest to aim at. 'AUTO' tries to guess.")
+            .defaultValue(FaceMode.AUTO)
             .build()
     );
 
@@ -161,6 +173,7 @@ public class MassOrderFiller extends Module {
     private final Set<BlockPos> processedChests = new HashSet<>();
     private BlockPos currentTarget = null;
     private Vec3d currentTargetOffset = Vec3d.ZERO;
+    private Direction currentFace = Direction.UP; // Track the face we are hitting
 
     // Store original pause setting to restore on deactivate
     private boolean prevPauseOnLostFocus = true;
@@ -176,6 +189,7 @@ public class MassOrderFiller extends Module {
         processedChests.clear();
         currentTarget = null;
         currentTargetOffset = Vec3d.ZERO;
+        currentFace = Direction.UP;
 
         // Prevent the game from pausing when you tab out
         if (mc.options != null) {
@@ -272,7 +286,7 @@ public class MassOrderFiller extends Module {
 
                 BlockHitResult hitResult = new BlockHitResult(
                         new Vec3d(currentTarget.getX() + currentTargetOffset.x, currentTarget.getY() + currentTargetOffset.y, currentTarget.getZ() + currentTargetOffset.z),
-                        Direction.UP,
+                        currentFace, // Use the selected face
                         currentTarget,
                         false
                 );
@@ -302,6 +316,10 @@ public class MassOrderFiller extends Module {
                         stage = Stage.SCANNING;
                         attempts = 0;
                     } else {
+                        // RE-ROLL THE HIT POSITION (Jitter + Option 2)
+                        // If we missed or failed to interact, try a new random spot on the face
+                        if (currentTarget != null) generateRandomOffset(currentTarget);
+
                         stage = Stage.INTERACTING;
                         timer = 0;
                     }
@@ -450,14 +468,103 @@ public class MassOrderFiller extends Module {
         nearbyChests.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(playerPos)));
 
         currentTarget = nearbyChests.get(0);
-        // Generate a random offset within the block to aim at (avoid center locking)
-        currentTargetOffset = new Vec3d(Math.random() * 0.4 + 0.3, Math.random() * 0.4 + 0.3, Math.random() * 0.4 + 0.3);
+
+        // Calculate offset with user settings
+        generateRandomOffset(currentTarget);
 
         if (debug.get()) info("Found chest at " + currentTarget.toShortString());
 
         stage = Stage.ROTATING;
         attempts = 0;
         timer = 0;
+    }
+
+    /**
+     * Calculates a random point on the chest.
+     * Respects the 'Force Face' setting if enabled.
+     */
+    private void generateRandomOffset(BlockPos pos) {
+        // 1. Check User Force Setting
+        FaceMode mode = forceFace.get();
+        if (mode != FaceMode.AUTO) {
+            switch (mode) {
+                case UP -> currentFace = Direction.UP;
+                case DOWN -> currentFace = Direction.DOWN;
+                case NORTH -> currentFace = Direction.NORTH;
+                case SOUTH -> currentFace = Direction.SOUTH;
+                case EAST -> currentFace = Direction.EAST;
+                case WEST -> currentFace = Direction.WEST;
+            }
+        } else {
+            // 2. Auto Logic (Smart Face Snapping)
+            Vec3d center = Vec3d.ofCenter(pos);
+            Vec3d playerEye = mc.player.getEyePos();
+            double dx = playerEye.x - center.x;
+            double dy = playerEye.y - center.y;
+            double dz = playerEye.z - center.z;
+
+            // Geometric face
+            currentFace = Direction.getFacing(dx, dy, dz);
+
+            // Logic to avoid hitting side slivers of Chests
+            BlockState state = mc.world.getBlockState(pos);
+            boolean isChest = state.getBlock() instanceof ChestBlock || state.getBlock() instanceof EnderChestBlock;
+
+            if (isChest && state.contains(ChestBlock.FACING)) {
+                Direction chestFacing = state.get(ChestBlock.FACING);
+                if (currentFace.getAxis().isHorizontal() && currentFace != chestFacing) {
+                    if (dy > 0) {
+                        currentFace = Direction.UP;
+                    } else {
+                        currentFace = chestFacing;
+                    }
+                }
+            }
+        }
+
+        // 3. Generate randomized offset on the 'currentFace'
+        double x = 0.5;
+        double y = 0.5;
+        double z = 0.5;
+
+        // Jitter (smaller range 0.4 total width to stay safe)
+        double off1 = (Math.random() * 0.4) - 0.2;
+        double off2 = (Math.random() * 0.4) - 0.2;
+
+        switch (currentFace) {
+            case UP -> {
+                y = 1.0;
+                x += off1;
+                z += off2;
+            }
+            case DOWN -> {
+                y = 0.0;
+                x += off1;
+                z += off2;
+            }
+            case NORTH -> {
+                z = 0.0;
+                x += off1;
+                y += off2;
+            }
+            case SOUTH -> {
+                z = 1.0;
+                x += off1;
+                y += off2;
+            }
+            case WEST -> {
+                x = 0.0;
+                z += off1;
+                y += off2;
+            }
+            case EAST -> {
+                x = 1.0;
+                z += off1;
+                y += off2;
+            }
+        }
+
+        currentTargetOffset = new Vec3d(x, y, z);
     }
 
     private boolean rotateTowards(BlockPos pos) {
