@@ -121,6 +121,7 @@ public class SpawnerDropper extends Module {
     // Timer for general state delays
     private int timer = 0;
     private int attempts = 0;
+    private int nullScreenCounter = 0; // Tracks how long screen has been closed during transition
 
     // Drop Logic Specifics
     private int currentStep = 0;
@@ -139,6 +140,7 @@ public class SpawnerDropper extends Module {
         currentFace = Direction.UP;
         currentStep = 0;
         attempts = 0;
+        nullScreenCounter = 0;
     }
 
     @Override
@@ -212,7 +214,6 @@ public class SpawnerDropper extends Module {
 
             case WAIT_FOR_OPEN:
                 if (mc.currentScreen instanceof HandledScreen) {
-                    // Check contents immediately upon open
                     stage = Stage.CHECK_CONTENTS;
                     timer = delay.get();
                 } else if (timer <= 0) {
@@ -266,7 +267,6 @@ public class SpawnerDropper extends Module {
                     if (Math.sqrt(pos.getSquaredDistance(playerPos)) > range.get()) continue;
 
                     BlockState state = mc.world.getBlockState(pos);
-                    // Adjust Block type if needed (e.g. Chests)
                     if (state.getBlock() == Blocks.SPAWNER) {
                         if (!processedSpawners.contains(pos)) {
                             nearbySpawners.add(pos);
@@ -277,7 +277,6 @@ public class SpawnerDropper extends Module {
         }
 
         if (nearbySpawners.isEmpty()) {
-            // Infinite Loop Logic: If we found nothing new, but we have processed some, clear processed to restart.
             if (!processedSpawners.isEmpty()) {
                 if (debug.get()) info("All nearby spawners checked. Resetting loop.");
                 processedSpawners.clear();
@@ -305,10 +304,10 @@ public class SpawnerDropper extends Module {
             return;
         }
 
-        // Logic: "Loop this until arrows are detected upon opening"
         if (hasArrowsInInventory(screen)) {
             if (debug.get()) info("Arrows detected on open! Selling.");
             stage = Stage.SELLING;
+            attempts = 0;
         } else {
             if (debug.get()) info("No arrows on open. Starting drop sequence.");
             stage = Stage.DROPPING;
@@ -323,16 +322,14 @@ public class SpawnerDropper extends Module {
             return;
         }
 
-        // Continuous Check: "After arrows are detected, exit spawner and re-enter"
         if (hasArrowsInInventory(screen)) {
             if (debug.get()) info("Arrows detected during drop. Re-entering.");
             mc.player.closeHandledScreen();
-            stage = Stage.INTERACTING; // Go back to interacting with the SAME target
+            stage = Stage.INTERACTING;
             timer = 10;
             return;
         }
 
-        // Perform Drop Clicks
         switch (currentStep) {
             case 0:
                 mc.interactionManager.clickSlot(screen.getScreenHandler().syncId, 50, 0, SlotActionType.PICKUP, mc.player);
@@ -341,11 +338,10 @@ public class SpawnerDropper extends Module {
                 break;
             case 1:
                 mc.interactionManager.clickSlot(screen.getScreenHandler().syncId, 53, 0, SlotActionType.PICKUP, mc.player);
-                currentStep = 2; // Move to dummy step
+                currentStep = 2;
                 timer = delay.get();
                 break;
             case 2:
-                // Originally this checked for empty. Now we just skip to next step.
                 currentStep = 3;
                 break;
             case 3:
@@ -355,11 +351,10 @@ public class SpawnerDropper extends Module {
                 break;
             case 4:
                 mc.interactionManager.clickSlot(screen.getScreenHandler().syncId, 53, 0, SlotActionType.PICKUP, mc.player);
-                currentStep = 5; // Move to dummy step
+                currentStep = 5;
                 timer = delay.get();
                 break;
             case 5:
-                // Originally this checked for empty. Now we just loop back.
                 currentStep = 0;
                 break;
         }
@@ -367,16 +362,19 @@ public class SpawnerDropper extends Module {
 
     private void handleSelling() {
         if (!(mc.currentScreen instanceof HandledScreen<?> screen)) {
+            // Wait for screen logic not strictly necessary here as we just came from CheckContents
+            // But if it closed unexpectedly:
             stage = Stage.SCANNING;
             return;
         }
 
-        // Find Gold Ingot (Sell All)
         int goldSlot = findSlot(screen, Items.GOLD_INGOT);
         if (goldSlot != -1) {
             mc.interactionManager.clickSlot(screen.getScreenHandler().syncId, goldSlot, 0, SlotActionType.PICKUP, mc.player);
             stage = Stage.CONFIRM_SELL;
             timer = delay.get();
+            attempts = 0;
+            nullScreenCounter = 0;
         } else {
             if (debug.get()) warning("Could not find Gold Ingot (Sell All). Skipping spawner.");
             mc.player.closeHandledScreen();
@@ -386,12 +384,20 @@ public class SpawnerDropper extends Module {
     }
 
     private void handleConfirmSell() {
+        // --- GRACE PERIOD LOGIC ---
+        // The server often closes the menu to open the confirmation menu.
+        // We must tolerate a few ticks of "null" screen.
         if (!(mc.currentScreen instanceof HandledScreen<?> screen)) {
-            stage = Stage.SCANNING;
-            return;
+            nullScreenCounter++;
+            if (nullScreenCounter > 20) { // Tolerate ~1 second of closed screen
+                if (debug.get()) warning("Menu closed for too long during confirmation.");
+                stage = Stage.SCANNING;
+            }
+            return; // Wait for next tick
         }
+        nullScreenCounter = 0; // Screen is open, reset null counter
 
-        // Find Green Glass Pane (Confirm)
+        // --- BUTTON SEARCH LOGIC ---
         int confirmSlot = findSlot(screen, Items.LIME_STAINED_GLASS_PANE);
         if (confirmSlot != -1) {
             mc.interactionManager.clickSlot(screen.getScreenHandler().syncId, confirmSlot, 0, SlotActionType.PICKUP, mc.player);
@@ -401,16 +407,16 @@ public class SpawnerDropper extends Module {
             stage = Stage.SCANNING;
             timer = delay.get();
         } else {
-            // Sometimes GUI takes a moment to update from Gold -> Confirm
+            // Button not found yet (lag or menu still loading)
             attempts++;
-            if (attempts > 5) {
-                if (debug.get()) warning("Could not find Confirm button.");
+            if (attempts > 30) { // ~3 seconds wait time total (assuming check runs every tick or so)
+                if (debug.get()) warning("Could not find Confirm button (Green Pane).");
                 mc.player.closeHandledScreen();
                 processedSpawners.add(currentTarget);
                 stage = Stage.SCANNING;
                 attempts = 0;
             } else {
-                timer = 5; // Wait a bit and try finding it again
+                timer = 2; // Check frequently
             }
         }
     }
@@ -479,7 +485,10 @@ public class SpawnerDropper extends Module {
     }
 
     private boolean hasArrowsInInventory(HandledScreen<?> screen) {
-        for (int i = 0; i < screen.getScreenHandler().slots.size(); i++) {
+        // Checking first 5 rows (0-44) to avoid "Next Page" button in row 6
+        for (int i = 0; i < 45; i++) {
+            if (i >= screen.getScreenHandler().slots.size()) break;
+
             ItemStack stack = screen.getScreenHandler().getSlot(i).getStack();
             if (!stack.isEmpty() && stack.getItem() == Items.ARROW) {
                 return true;
