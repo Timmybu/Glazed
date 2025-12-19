@@ -122,6 +122,7 @@ public class SpawnerDropper extends Module {
     private int timer = 0;
     private int attempts = 0;
     private int nullScreenCounter = 0; // Tracks how long screen has been closed during transition
+    private int sellMenuSyncId = -1; // Used to detect menu changes
 
     // Drop Logic Specifics
     private int currentStep = 0;
@@ -141,6 +142,7 @@ public class SpawnerDropper extends Module {
         currentStep = 0;
         attempts = 0;
         nullScreenCounter = 0;
+        sellMenuSyncId = -1;
     }
 
     @Override
@@ -370,6 +372,9 @@ public class SpawnerDropper extends Module {
 
         int goldSlot = findSlot(screen, Items.GOLD_INGOT);
         if (goldSlot != -1) {
+            // Store the current ID to ensure we wait for the next menu
+            sellMenuSyncId = screen.getScreenHandler().syncId;
+
             mc.interactionManager.clickSlot(screen.getScreenHandler().syncId, goldSlot, 0, SlotActionType.PICKUP, mc.player);
             stage = Stage.CONFIRM_SELL;
             timer = delay.get();
@@ -397,8 +402,25 @@ public class SpawnerDropper extends Module {
         }
         nullScreenCounter = 0; // Screen is open, reset null counter
 
+        // --- VALIDATE WE ARE IN THE NEW MENU ---
+        // If the Sync ID is the same AND the Gold Ingot is still there, we are likely still in the Sell Menu.
+        // This prevents clicking decorative stained glass in the Sell Menu.
+        boolean sameId = (screen.getScreenHandler().syncId == sellMenuSyncId);
+        boolean hasGold = (findSlot(screen, Items.GOLD_INGOT) != -1);
+
+        if (sameId && hasGold) {
+            // We are likely still in the old menu. Wait.
+            timer = 2;
+            return;
+        }
+
         // --- BUTTON SEARCH LOGIC ---
+        // Servers may use Lime (Light Green) or Green (Dark Green) panes.
         int confirmSlot = findSlot(screen, Items.LIME_STAINED_GLASS_PANE);
+        if (confirmSlot == -1) {
+            confirmSlot = findSlot(screen, Items.GREEN_STAINED_GLASS_PANE);
+        }
+
         if (confirmSlot != -1) {
             mc.interactionManager.clickSlot(screen.getScreenHandler().syncId, confirmSlot, 0, SlotActionType.PICKUP, mc.player);
             if (debug.get()) info("Sold successfully. Moving to next.");
@@ -409,8 +431,8 @@ public class SpawnerDropper extends Module {
         } else {
             // Button not found yet (lag or menu still loading)
             attempts++;
-            if (attempts > 30) { // ~3 seconds wait time total (assuming check runs every tick or so)
-                if (debug.get()) warning("Could not find Confirm button (Green Pane).");
+            if (attempts > 30) { // ~3 seconds wait time total
+                if (debug.get()) warning("Could not find Confirm button (Green/Lime Pane).");
                 mc.player.closeHandledScreen();
                 processedSpawners.add(currentTarget);
                 stage = Stage.SCANNING;
