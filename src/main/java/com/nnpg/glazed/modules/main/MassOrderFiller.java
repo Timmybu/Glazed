@@ -60,6 +60,15 @@ public class MassOrderFiller extends Module {
             .build()
     );
 
+    private final Setting<Integer> loopDelay = sgGeneral.add(new IntSetting.Builder()
+            .name("loop-delay")
+            .description("Delay in ticks before resetting checked chests and looping. (12000 = 10 mins)")
+            .defaultValue(20)
+            .min(0)
+            .sliderMax(36000) // Allows slider to go up to 10 minutes
+            .build()
+    );
+
     public enum FaceMode {
         AUTO, UP, DOWN, NORTH, SOUTH, EAST, WEST
     }
@@ -163,6 +172,9 @@ public class MassOrderFiller extends Module {
         START_SELLING,
         WAIT_FOR_SELL_GUI,
         SELLING_SHULKERS,
+
+        // Looping
+        LOOPING,
 
         IDLE
     }
@@ -427,6 +439,12 @@ public class MassOrderFiller extends Module {
                 handleSelling();
                 break;
 
+            case LOOPING:
+                if (debug.get()) info("Looping... resetting checked chests.");
+                processedChests.clear();
+                stage = Stage.SCANNING;
+                break;
+
             case IDLE:
                 stage = Stage.SCANNING;
                 break;
@@ -460,8 +478,9 @@ public class MassOrderFiller extends Module {
         }
 
         if (nearbyChests.isEmpty()) {
-            if (debug.get() && timer == 0) info("No unchecked chests in range.");
-            timer = 20;
+            if (debug.get()) info("All chests checked. Waiting " + loopDelay.get() + " ticks before looping.");
+            stage = Stage.LOOPING;
+            timer = loopDelay.get();
             return;
         }
 
