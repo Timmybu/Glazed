@@ -719,6 +719,24 @@ public class MassOrderFiller extends Module {
         }
 
         if (eligibleItems == 0) {
+            // Check if we successfully filled anything (look for bones/shulkers in the container slots)
+            boolean filledAny = false;
+            for (int i = 0; i < playerStart; i++) {
+                ItemStack stack = handler.getSlot(i).getStack();
+                if (isBoneShulker(stack) || isSellableItem(stack)) {
+                    filledAny = true;
+                    break;
+                }
+            }
+
+            if (!filledAny) {
+                if (debug.get()) info("Nothing filled. Aborting order.");
+                mc.player.closeHandledScreen();
+                stage = Stage.CHECK_REMAINING_BONES;
+                timer = delay.get();
+                return;
+            }
+
             stage = Stage.CLOSE_FILL_GUI;
             timer = delay.get();
             return;
